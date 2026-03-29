@@ -85,17 +85,40 @@ impl HttpClient {
         Ok(normalized_url.trim_end_matches('/').to_string())
     }
 
-    /// Perform a GET request and parse the response as JSON.
+    /// Perform a GET request with optional query parameters.
     ///
     /// # Arguments
     /// * `path` - The path to append to the base URL.
+    /// * `params` - Optional query parameters as key-value pairs.
     ///
     /// # Returns
     /// The parsed JSON response.
-    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
+    pub async fn get<T: DeserializeOwned>(
+        &mut self,
+        path: &str,
+        params: Option<&[(impl AsRef<str>, impl AsRef<str>)]>,
+    ) -> Result<T> {
         let url = self.request_url(path);
-        let headers = self.build_auth_headers("GET", path, None, HashMap::new());
-        let request = self.client.get(&url);
+
+        let params_map: HashMap<String, String> = match params {
+            Some(p) => p
+                .iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        let headers = self
+            .build_auth_headers("GET", path, None, params_map)
+            .await?;
+
+        let mut request = self.client.get(&url);
+        if let Some(p) = params {
+            for (key, value) in p {
+                request = request.query(&[(key.as_ref(), value.as_ref())]);
+            }
+        }
+
         let request = Self::apply_headers(request, &headers);
         let resp = request.send().await.map_err(|e| Error::UnexpectedError {
             message: "http get failed".to_string(),
@@ -104,34 +127,70 @@ impl HttpClient {
         self.parse_response(resp).await
     }
 
-    /// Perform a GET request with query parameters.
+    /// Perform a POST request with a JSON body.
     ///
     /// # Arguments
     /// * `path` - The path to append to the base URL.
-    /// * `params` - Query parameters as key-value pairs (supports both `&str` and `String`).
+    /// * `body` - The JSON body to send.
     ///
     /// # Returns
     /// The parsed JSON response.
-    pub async fn get_with_params<T: DeserializeOwned>(
-        &self,
+    pub async fn post<T: DeserializeOwned, B: serde::Serialize>(
+        &mut self,
         path: &str,
-        params: &[(impl AsRef<str>, impl AsRef<str>)],
+        body: &B,
     ) -> Result<T> {
         let url = self.request_url(path);
-        let params_map: HashMap<String, String> = params
-            .iter()
-            .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
-            .collect();
-        let headers = self.build_auth_headers("GET", path, None, params_map.clone());
+        let body_str = serde_json::to_string(body).ok();
+        let headers = self
+            .build_auth_headers("POST", path, body_str.as_deref(), HashMap::new())
+            .await?;
+        let request = self.client.post(&url).json(body);
+        let request = Self::apply_headers(request, &headers);
+        let resp = request.send().await.map_err(|e| Error::UnexpectedError {
+            message: "http post failed".to_string(),
+            source: Some(Box::new(e)),
+        })?;
+        self.parse_response(resp).await
+    }
 
-        let mut request = self.client.get(&url);
-        for (key, value) in params {
-            request = request.query(&[(key.as_ref(), value.as_ref())]);
+    /// Perform a DELETE request with optional query parameters.
+    ///
+    /// # Arguments
+    /// * `path` - The path to append to the base URL.
+    /// * `params` - Optional query parameters as key-value pairs.
+    ///
+    /// # Returns
+    /// The parsed JSON response.
+    pub async fn delete<T: DeserializeOwned>(
+        &mut self,
+        path: &str,
+        params: Option<&[(impl AsRef<str>, impl AsRef<str>)]>,
+    ) -> Result<T> {
+        let url = self.request_url(path);
+
+        let params_map: HashMap<String, String> = match params {
+            Some(p) => p
+                .iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        let headers = self
+            .build_auth_headers("DELETE", path, None, params_map)
+            .await?;
+
+        let mut request = self.client.delete(&url);
+        if let Some(p) = params {
+            for (key, value) in p {
+                request = request.query(&[(key.as_ref(), value.as_ref())]);
+            }
         }
 
         let request = Self::apply_headers(request, &headers);
         let resp = request.send().await.map_err(|e| Error::UnexpectedError {
-            message: "http get failed".to_string(),
+            message: "http delete failed".to_string(),
             source: Some(Box::new(e)),
         })?;
         self.parse_response(resp).await
@@ -143,19 +202,19 @@ impl HttpClient {
     }
 
     /// Build auth headers for a request.
-    fn build_auth_headers(
-        &self,
+    async fn build_auth_headers(
+        &mut self,
         method: &str,
         path: &str,
         data: Option<&str>,
         params: HashMap<String, String>,
-    ) -> HashMap<String, String> {
-        if let Some(ref auth_fn) = self.auth_function {
+    ) -> Result<HashMap<String, String>> {
+        if let Some(ref mut auth_fn) = self.auth_function {
             let parameter =
                 RESTAuthParameter::new(method, path, data.map(|s| s.to_string()), params);
-            auth_fn.apply(&parameter)
+            auth_fn.apply(&parameter).await
         } else {
-            HashMap::new()
+            Ok(HashMap::new())
         }
     }
 
@@ -202,6 +261,14 @@ impl HttpClient {
             message: "failed to read response".to_string(),
             source: Some(Box::new(e)),
         })?;
+
+        // Handle empty response body - return null as default for types like serde_json::Value
+        if text.trim().is_empty() {
+            return serde_json::from_str("null").map_err(|e| Error::UnexpectedError {
+                message: "failed to parse empty response".to_string(),
+                source: Some(Box::new(e)),
+            });
+        }
 
         serde_json::from_str(&text).map_err(|e| Error::UnexpectedError {
             message: "failed to parse json".to_string(),

@@ -22,8 +22,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Base trait for REST responses.
-pub trait RESTResponse {}
+use crate::spec::Schema;
 
 /// Error response from REST API calls.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -39,7 +38,6 @@ pub struct ErrorResponse {
     pub code: Option<i32>,
 }
 
-impl RESTResponse for ErrorResponse {}
 impl ErrorResponse {
     /// Create a new ErrorResponse.
     pub fn new(
@@ -57,6 +55,141 @@ impl ErrorResponse {
     }
 }
 
+/// Base response containing audit information.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuditRESTResponse {
+    /// The owner of the resource.
+    pub owner: Option<String>,
+    /// Timestamp when the resource was created.
+    pub created_at: Option<i64>,
+    /// User who created the resource.
+    pub created_by: Option<String>,
+    /// Timestamp when the resource was last updated.
+    pub updated_at: Option<i64>,
+    /// User who last updated the resource.
+    pub updated_by: Option<String>,
+}
+
+impl AuditRESTResponse {
+    /// Create a new AuditRESTResponse.
+    pub fn new(
+        owner: Option<String>,
+        created_at: Option<i64>,
+        created_by: Option<String>,
+        updated_at: Option<i64>,
+        updated_by: Option<String>,
+    ) -> Self {
+        Self {
+            owner,
+            created_at,
+            created_by,
+            updated_at,
+            updated_by,
+        }
+    }
+
+    /// Put audit options into the provided dictionary.
+    pub fn put_audit_options_to(&self, options: &mut HashMap<String, String>) {
+        if let Some(owner) = &self.owner {
+            options.insert("owner".to_string(), owner.clone());
+        }
+        if let Some(created_by) = &self.created_by {
+            options.insert("createdBy".to_string(), created_by.clone());
+        }
+        if let Some(created_at) = self.created_at {
+            options.insert("createdAt".to_string(), created_at.to_string());
+        }
+        if let Some(updated_by) = &self.updated_by {
+            options.insert("updatedBy".to_string(), updated_by.clone());
+        }
+        if let Some(updated_at) = self.updated_at {
+            options.insert("updatedAt".to_string(), updated_at.to_string());
+        }
+    }
+}
+
+/// Response for getting a table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTableResponse {
+    /// Audit information.
+    #[serde(flatten)]
+    pub audit: AuditRESTResponse,
+    /// The unique identifier of the table.
+    pub id: Option<String>,
+    /// The name of the table.
+    pub name: Option<String>,
+    /// The path to the table.
+    pub path: Option<String>,
+    /// Whether the table is external.
+    pub is_external: Option<bool>,
+    /// The schema ID of the table.
+    pub schema_id: Option<i64>,
+    /// The schema of the table.
+    pub schema: Option<Schema>,
+}
+
+impl GetTableResponse {
+    /// Create a new GetTableResponse.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: Option<String>,
+        name: Option<String>,
+        path: Option<String>,
+        is_external: Option<bool>,
+        schema_id: Option<i64>,
+        schema: Option<Schema>,
+        audit: AuditRESTResponse,
+    ) -> Self {
+        Self {
+            audit,
+            id,
+            name,
+            path,
+            is_external,
+            schema_id,
+            schema,
+        }
+    }
+}
+
+/// Response for getting a database.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetDatabaseResponse {
+    /// Audit information.
+    #[serde(flatten)]
+    pub audit: AuditRESTResponse,
+    /// The unique identifier of the database.
+    pub id: Option<String>,
+    /// The name of the database.
+    pub name: Option<String>,
+    /// The location of the database.
+    pub location: Option<String>,
+    /// Configuration options for the database.
+    pub options: HashMap<String, String>,
+}
+
+impl GetDatabaseResponse {
+    /// Create a new GetDatabaseResponse.
+    pub fn new(
+        id: Option<String>,
+        name: Option<String>,
+        location: Option<String>,
+        options: HashMap<String, String>,
+        audit: AuditRESTResponse,
+    ) -> Self {
+        Self {
+            audit,
+            id,
+            name,
+            location,
+            options,
+        }
+    }
+}
+
 /// Response containing configuration defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -64,8 +197,6 @@ pub struct ConfigResponse {
     /// Default configuration values.
     pub defaults: HashMap<String, String>,
 }
-
-impl RESTResponse for ConfigResponse {}
 
 impl ConfigResponse {
     /// Create a new ConfigResponse.
@@ -97,13 +228,31 @@ pub struct ListDatabasesResponse {
     pub next_page_token: Option<String>,
 }
 
-impl RESTResponse for ListDatabasesResponse {}
-
 impl ListDatabasesResponse {
     /// Create a new ListDatabasesResponse.
     pub fn new(databases: Vec<String>, next_page_token: Option<String>) -> Self {
         Self {
             databases,
+            next_page_token,
+        }
+    }
+}
+
+/// Response for listing tables.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTablesResponse {
+    /// List of table names.
+    pub tables: Option<Vec<String>>,
+    /// Token for the next page.
+    pub next_page_token: Option<String>,
+}
+
+impl ListTablesResponse {
+    /// Create a new ListTablesResponse.
+    pub fn new(tables: Option<Vec<String>>, next_page_token: Option<String>) -> Self {
+        Self {
+            tables,
             next_page_token,
         }
     }
@@ -128,7 +277,6 @@ impl<T> PagedList<T> {
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,5 +307,25 @@ mod tests {
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("\"databases\":[\"db1\",\"db2\"]"));
         assert!(json.contains("\"nextPageToken\":\"token123\""));
+    }
+
+    #[test]
+    fn test_audit_response_options() {
+        let audit = AuditRESTResponse::new(
+            Some("owner1".to_string()),
+            Some(1000),
+            Some("creator".to_string()),
+            Some(2000),
+            Some("updater".to_string()),
+        );
+
+        let mut options = HashMap::new();
+        audit.put_audit_options_to(&mut options);
+
+        assert_eq!(options.get("owner"), Some(&"owner1".to_string()));
+        assert_eq!(options.get("createdBy"), Some(&"creator".to_string()));
+        assert_eq!(options.get("createdAt"), Some(&"1000".to_string()));
+        assert_eq!(options.get("updatedBy"), Some(&"updater".to_string()));
+        assert_eq!(options.get("updatedAt"), Some(&"2000".to_string()));
     }
 }

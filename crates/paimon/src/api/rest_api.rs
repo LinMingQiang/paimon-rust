@@ -23,17 +23,56 @@
 use std::collections::HashMap;
 
 use crate::api::rest_client::HttpClient;
+use crate::catalog::Identifier;
 use crate::common::{CatalogOptions, Options};
+use crate::spec::Schema;
 use crate::Result;
 
-use super::api_response::{ConfigResponse, ListDatabasesResponse, PagedList};
+use super::api_request::{
+    AlterDatabaseRequest, CreateDatabaseRequest, CreateTableRequest, RenameTableRequest,
+};
+use super::api_response::{
+    ConfigResponse, GetDatabaseResponse, GetTableResponse, ListDatabasesResponse,
+    ListTablesResponse, PagedList,
+};
 use super::auth::{AuthProviderFactory, RESTAuthFunction};
 use super::resource_paths::ResourcePaths;
 use super::rest_util::RESTUtil;
 
+/// Validate that a string is not empty after trimming.
+///
+/// # Arguments
+/// * `value` - The string to validate.
+/// * `field_name` - The name of the field for error messages.
+///
+/// # Returns
+/// `Ok(())` if valid, `Err` if empty.
+fn validate_non_empty(value: &str, field_name: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(crate::Error::ConfigInvalid {
+            message: format!("{} cannot be empty", field_name),
+        });
+    }
+    Ok(())
+}
+
+/// Validate that multiple strings are not empty after trimming.
+///
+/// # Arguments
+/// * `values` - Slice of (value, field_name) pairs to validate.
+///
+/// # Returns
+/// `Ok(())` if all valid, `Err` if any is empty.
+fn validate_non_empty_multi(values: &[(&str, &str)]) -> Result<()> {
+    for (value, field_name) in values {
+        validate_non_empty(value, field_name)?;
+    }
+    Ok(())
+}
+
 /// REST API wrapper for Paimon catalog operations.
 ///
-/// This struct provides methods for database CRUD operations
+/// This struct provides methods for database and table CRUD operations
 /// through a REST API client.
 pub struct RESTApi {
     client: HttpClient,
@@ -48,6 +87,8 @@ impl RESTApi {
     pub const MAX_RESULTS: &'static str = "maxResults";
     pub const PAGE_TOKEN: &'static str = "pageToken";
     pub const DATABASE_NAME_PATTERN: &'static str = "databaseNamePattern";
+    pub const TABLE_NAME_PATTERN: &'static str = "tableNamePattern";
+    pub const TABLE_TYPE: &'static str = "tableType";
 
     /// Create a new RESTApi from options.
     ///
@@ -99,7 +140,7 @@ impl RESTApi {
                 RESTUtil::encode_string(warehouse),
             )];
             let config_response: ConfigResponse = client
-                .get_with_params(&ResourcePaths::config(), &query_params)
+                .get(&ResourcePaths::config(), Some(&query_params))
                 .await?;
 
             // Merge config response with options (client config takes priority)
@@ -130,7 +171,7 @@ impl RESTApi {
     // ==================== Database Operations ====================
 
     /// List all databases.
-    pub async fn list_databases(&self) -> Result<Vec<String>> {
+    pub async fn list_databases(&mut self) -> Result<Vec<String>> {
         let mut results = Vec::new();
         let mut page_token: Option<String> = None;
 
@@ -151,7 +192,7 @@ impl RESTApi {
 
     /// List databases with pagination.
     pub async fn list_databases_paged(
-        &self,
+        &mut self,
         max_results: Option<u32>,
         page_token: Option<&str>,
         database_name_pattern: Option<&str>,
@@ -172,11 +213,166 @@ impl RESTApi {
         }
 
         let response: ListDatabasesResponse = if params.is_empty() {
-            self.client.get(&path).await?
+            self.client.get(&path, None::<&[(&str, &str)]>).await?
         } else {
-            self.client.get_with_params(&path, &params).await?
+            self.client.get(&path, Some(&params)).await?
         };
 
         Ok(PagedList::new(response.databases, response.next_page_token))
+    }
+
+    /// Create a new database.
+    pub async fn create_database(
+        &mut self,
+        name: &str,
+        options: Option<std::collections::HashMap<String, String>>,
+    ) -> Result<()> {
+        validate_non_empty(name, "database name")?;
+        let path = self.resource_paths.databases();
+        let request = CreateDatabaseRequest::new(name.to_string(), options.unwrap_or_default());
+        let _resp: serde_json::Value = self.client.post(&path, &request).await?;
+        Ok(())
+    }
+
+    /// Get database information.
+    pub async fn get_database(&mut self, name: &str) -> Result<GetDatabaseResponse> {
+        validate_non_empty(name, "database name")?;
+        let path = self.resource_paths.database(name);
+        self.client.get(&path, None::<&[(&str, &str)]>).await
+    }
+
+    /// Alter database configuration.
+    pub async fn alter_database(
+        &mut self,
+        name: &str,
+        removals: Vec<String>,
+        updates: std::collections::HashMap<String, String>,
+    ) -> Result<()> {
+        validate_non_empty(name, "database name")?;
+        let path = self.resource_paths.database(name);
+        let request = AlterDatabaseRequest::new(removals, updates);
+        let _resp: serde_json::Value = self.client.post(&path, &request).await?;
+        Ok(())
+    }
+
+    /// Drop a database.
+    pub async fn drop_database(&mut self, name: &str) -> Result<()> {
+        validate_non_empty(name, "database name")?;
+        let path = self.resource_paths.database(name);
+        let _resp: serde_json::Value = self.client.delete(&path, None::<&[(&str, &str)]>).await?;
+        Ok(())
+    }
+
+    // ==================== Table Operations ====================
+
+    /// List all tables in a database.
+    pub async fn list_tables(&mut self, database: &str) -> Result<Vec<String>> {
+        validate_non_empty(database, "database name")?;
+
+        let mut results = Vec::new();
+        let mut page_token: Option<String> = None;
+
+        loop {
+            let paged = self
+                .list_tables_paged(database, None, page_token.as_deref(), None, None)
+                .await?;
+            let is_empty = paged.elements.is_empty();
+            results.extend(paged.elements);
+            page_token = paged.next_page_token;
+            if page_token.is_none() || is_empty {
+                break;
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// List tables with pagination.
+    pub async fn list_tables_paged(
+        &mut self,
+        database: &str,
+        max_results: Option<u32>,
+        page_token: Option<&str>,
+        table_name_pattern: Option<&str>,
+        table_type: Option<&str>,
+    ) -> Result<PagedList<String>> {
+        validate_non_empty(database, "database name")?;
+        let path = self.resource_paths.tables(Some(database));
+        let mut params: Vec<(&str, String)> = Vec::new();
+
+        if let Some(max) = max_results {
+            params.push((Self::MAX_RESULTS, max.to_string()));
+        }
+
+        if let Some(token) = page_token {
+            params.push((Self::PAGE_TOKEN, token.to_string()));
+        }
+
+        if let Some(pattern) = table_name_pattern {
+            params.push((Self::TABLE_NAME_PATTERN, pattern.to_string()));
+        }
+
+        if let Some(ttype) = table_type {
+            params.push((Self::TABLE_TYPE, ttype.to_string()));
+        }
+
+        let response: ListTablesResponse = if params.is_empty() {
+            self.client.get(&path, None::<&[(&str, &str)]>).await?
+        } else {
+            self.client.get(&path, Some(&params)).await?
+        };
+
+        Ok(PagedList::new(
+            response.tables.unwrap_or_default(),
+            response.next_page_token,
+        ))
+    }
+
+    /// Create a new table.
+    pub async fn create_table(&mut self, identifier: &Identifier, schema: Schema) -> Result<()> {
+        let database = identifier.database();
+        let table = identifier.object();
+        validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
+        let path = self.resource_paths.tables(Some(database));
+        let request = CreateTableRequest::new(identifier.clone(), schema);
+        let _resp: serde_json::Value = self.client.post(&path, &request).await?;
+        Ok(())
+    }
+
+    /// Get table information.
+    pub async fn get_table(&mut self, identifier: &Identifier) -> Result<GetTableResponse> {
+        let database = identifier.database();
+        let table = identifier.object();
+        validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
+        let path = self.resource_paths.table(database, table);
+        self.client.get(&path, None::<&[(&str, &str)]>).await
+    }
+
+    /// Rename a table.
+    pub async fn rename_table(
+        &mut self,
+        source: &Identifier,
+        destination: &Identifier,
+    ) -> Result<()> {
+        validate_non_empty_multi(&[
+            (source.database(), "source database name"),
+            (source.object(), "source table name"),
+            (destination.database(), "destination database name"),
+            (destination.object(), "destination table name"),
+        ])?;
+        let path = self.resource_paths.rename_table();
+        let request = RenameTableRequest::new(source.clone(), destination.clone());
+        let _resp: serde_json::Value = self.client.post(&path, &request).await?;
+        Ok(())
+    }
+
+    /// Drop a table.
+    pub async fn drop_table(&mut self, identifier: &Identifier) -> Result<()> {
+        let database = identifier.database();
+        let table = identifier.object();
+        validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
+        let path = self.resource_paths.table(database, table);
+        let _resp: serde_json::Value = self.client.delete(&path, None::<&[(&str, &str)]>).await?;
+        Ok(())
     }
 }

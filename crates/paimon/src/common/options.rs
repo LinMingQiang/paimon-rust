@@ -38,8 +38,37 @@ impl CatalogOptions {
     /// Authentication token.
     pub const TOKEN: &'static str = "token";
 
+    /// Data token enabled flag.
+    pub const DATA_TOKEN_ENABLED: &'static str = "data-token.enabled";
+
     /// Prefix for catalog resources.
     pub const PREFIX: &'static str = "prefix";
+
+    // DLF (Data Lake Formation) configuration options
+
+    /// DLF region.
+    pub const DLF_REGION: &'static str = "dlf.region";
+
+    /// DLF access key ID.
+    pub const DLF_ACCESS_KEY_ID: &'static str = "dlf.access-key-id";
+
+    /// DLF access key secret.
+    pub const DLF_ACCESS_KEY_SECRET: &'static str = "dlf.access-key-secret";
+
+    /// DLF security token (optional, for temporary credentials).
+    pub const DLF_ACCESS_SECURITY_TOKEN: &'static str = "dlf.security-token";
+
+    /// DLF signing algorithm (default or openapi).
+    pub const DLF_SIGNING_ALGORITHM: &'static str = "dlf.signing-algorithm";
+
+    /// DLF token loader type (e.g., "ecs").
+    pub const DLF_TOKEN_LOADER: &'static str = "dlf.token-loader";
+
+    /// DLF ECS metadata URL.
+    pub const DLF_TOKEN_ECS_METADATA_URL: &'static str = "dlf.token-ecs-metadata-url";
+
+    /// DLF ECS role name.
+    pub const DLF_TOKEN_ECS_ROLE_NAME: &'static str = "dlf.token-ecs-role-name";
 }
 
 /// Configuration options container.

@@ -19,6 +19,7 @@
 //!
 //! This module provides REST API client, request, and response types.
 
+pub mod api_request;
 pub mod auth;
 pub mod resource_paths;
 pub mod rest_api;
@@ -28,9 +29,15 @@ pub mod rest_util;
 
 mod api_response;
 
+// Re-export request types
+pub use api_request::{
+    AlterDatabaseRequest, CreateDatabaseRequest, CreateTableRequest, RenameTableRequest,
+};
+
 // Re-export response types
 pub use api_response::{
-    ConfigResponse, ErrorResponse, ListDatabasesResponse, PagedList, RESTResponse,
+    AuditRESTResponse, ConfigResponse, ErrorResponse, GetDatabaseResponse, GetTableResponse,
+    ListDatabasesResponse, ListTablesResponse, PagedList,
 };
 
 // Re-export error types
