@@ -27,23 +27,29 @@ use crate::Result;
 /// Configuration key for OSS endpoint.
 ///
 /// Compatible with paimon-java's `fs.oss.endpoint`.
-const OSS_ENDPOINT: &str = "fs.oss.endpoint";
+pub(crate) const OSS_ENDPOINT: &str = "fs.oss.endpoint";
 
 /// Configuration key for OSS access key ID.
 ///
 /// Compatible with paimon-java's `fs.oss.accessKeyId`.
-const OSS_ACCESS_KEY_ID: &str = "fs.oss.accessKeyId";
+pub(crate) const OSS_ACCESS_KEY_ID: &str = "fs.oss.accessKeyId";
 
 /// Configuration key for OSS access key secret.
 ///
 /// Compatible with paimon-java's `fs.oss.accessKeySecret`.
-const OSS_ACCESS_KEY_SECRET: &str = "fs.oss.accessKeySecret";
+pub(crate) const OSS_ACCESS_KEY_SECRET: &str = "fs.oss.accessKeySecret";
+
+/// Configuration key for OSS STS security token (optional).
+///
+/// Compatible with paimon-java's `fs.oss.securityToken`.
+/// Required when using STS temporary credentials (e.g. from REST data tokens).
+pub(crate) const OSS_SECURITY_TOKEN: &str = "fs.oss.securityToken";
 
 /// Parse paimon catalog options into an [`OssConfig`].
 ///
-/// Extracts OSS-related configuration keys (endpoint, access key, secret key)
-/// from the provided properties map and maps them to the corresponding
-/// [`OssConfig`] fields.
+/// Extracts OSS-related configuration keys (endpoint, access key, secret key,
+/// and optional security token) from the provided properties map and maps them
+/// to the corresponding [`OssConfig`] fields.
 ///
 /// Returns an error if any required configuration key is missing.
 pub(crate) fn oss_config_parse(mut props: HashMap<String, String>) -> Result<OssConfig> {
@@ -73,6 +79,7 @@ pub(crate) fn oss_config_parse(mut props: HashMap<String, String>) -> Result<Oss
                 })?,
         );
 
+    cfg.security_token = props.remove(OSS_SECURITY_TOKEN);
     Ok(cfg)
 }
 

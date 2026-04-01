@@ -77,7 +77,6 @@ fn validate_non_empty_multi(values: &[(&str, &str)]) -> Result<()> {
 pub struct RESTApi {
     client: HttpClient,
     resource_paths: ResourcePaths,
-    #[allow(dead_code)]
     options: Options,
 }
 
@@ -101,7 +100,7 @@ impl RESTApi {
     ///
     /// # Errors
     /// Returns an error if required options are missing or if config fetch fails.
-    pub async fn new(mut options: Options, config_required: bool) -> Result<Self> {
+    pub async fn new(options: Options, config_required: bool) -> Result<Self> {
         let uri = options
             .get(CatalogOptions::URI)
             .ok_or_else(|| crate::Error::ConfigInvalid {
@@ -144,17 +143,17 @@ impl RESTApi {
                 .await?;
 
             // Merge config response with options (client config takes priority)
-            options = config_response.merge_options(&options);
+            let merged = config_response.merge_options(&options);
 
             // Update base headers from merged options and recreate auth function
-            base_headers.extend(RESTUtil::extract_prefix_map(&options, Self::HEADER_PREFIX));
+            base_headers.extend(RESTUtil::extract_prefix_map(&merged, Self::HEADER_PREFIX));
             // Recreate auth function with updated headers if needed
-            let auth_provider = AuthProviderFactory::create_auth_provider(&options)?;
+            let auth_provider = AuthProviderFactory::create_auth_provider(&merged)?;
             let rest_auth_function = RESTAuthFunction::new(base_headers, auth_provider);
 
             client.set_auth_function(rest_auth_function);
 
-            options
+            merged
         } else {
             options
         };
@@ -168,10 +167,15 @@ impl RESTApi {
         })
     }
 
+    /// Get the options (potentially merged with server config).
+    pub fn options(&self) -> &Options {
+        &self.options
+    }
+
     // ==================== Database Operations ====================
 
     /// List all databases.
-    pub async fn list_databases(&mut self) -> Result<Vec<String>> {
+    pub async fn list_databases(&self) -> Result<Vec<String>> {
         let mut results = Vec::new();
         let mut page_token: Option<String> = None;
 
@@ -192,7 +196,7 @@ impl RESTApi {
 
     /// List databases with pagination.
     pub async fn list_databases_paged(
-        &mut self,
+        &self,
         max_results: Option<u32>,
         page_token: Option<&str>,
         database_name_pattern: Option<&str>,
@@ -223,9 +227,9 @@ impl RESTApi {
 
     /// Create a new database.
     pub async fn create_database(
-        &mut self,
+        &self,
         name: &str,
-        options: Option<std::collections::HashMap<String, String>>,
+        options: Option<HashMap<String, String>>,
     ) -> Result<()> {
         validate_non_empty(name, "database name")?;
         let path = self.resource_paths.databases();
@@ -235,7 +239,7 @@ impl RESTApi {
     }
 
     /// Get database information.
-    pub async fn get_database(&mut self, name: &str) -> Result<GetDatabaseResponse> {
+    pub async fn get_database(&self, name: &str) -> Result<GetDatabaseResponse> {
         validate_non_empty(name, "database name")?;
         let path = self.resource_paths.database(name);
         self.client.get(&path, None::<&[(&str, &str)]>).await
@@ -243,10 +247,10 @@ impl RESTApi {
 
     /// Alter database configuration.
     pub async fn alter_database(
-        &mut self,
+        &self,
         name: &str,
         removals: Vec<String>,
-        updates: std::collections::HashMap<String, String>,
+        updates: HashMap<String, String>,
     ) -> Result<()> {
         validate_non_empty(name, "database name")?;
         let path = self.resource_paths.database(name);
@@ -256,7 +260,7 @@ impl RESTApi {
     }
 
     /// Drop a database.
-    pub async fn drop_database(&mut self, name: &str) -> Result<()> {
+    pub async fn drop_database(&self, name: &str) -> Result<()> {
         validate_non_empty(name, "database name")?;
         let path = self.resource_paths.database(name);
         let _resp: serde_json::Value = self.client.delete(&path, None::<&[(&str, &str)]>).await?;
@@ -266,7 +270,7 @@ impl RESTApi {
     // ==================== Table Operations ====================
 
     /// List all tables in a database.
-    pub async fn list_tables(&mut self, database: &str) -> Result<Vec<String>> {
+    pub async fn list_tables(&self, database: &str) -> Result<Vec<String>> {
         validate_non_empty(database, "database name")?;
 
         let mut results = Vec::new();
@@ -289,7 +293,7 @@ impl RESTApi {
 
     /// List tables with pagination.
     pub async fn list_tables_paged(
-        &mut self,
+        &self,
         database: &str,
         max_results: Option<u32>,
         page_token: Option<&str>,
@@ -329,7 +333,7 @@ impl RESTApi {
     }
 
     /// Create a new table.
-    pub async fn create_table(&mut self, identifier: &Identifier, schema: Schema) -> Result<()> {
+    pub async fn create_table(&self, identifier: &Identifier, schema: Schema) -> Result<()> {
         let database = identifier.database();
         let table = identifier.object();
         validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
@@ -340,7 +344,7 @@ impl RESTApi {
     }
 
     /// Get table information.
-    pub async fn get_table(&mut self, identifier: &Identifier) -> Result<GetTableResponse> {
+    pub async fn get_table(&self, identifier: &Identifier) -> Result<GetTableResponse> {
         let database = identifier.database();
         let table = identifier.object();
         validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
@@ -349,11 +353,7 @@ impl RESTApi {
     }
 
     /// Rename a table.
-    pub async fn rename_table(
-        &mut self,
-        source: &Identifier,
-        destination: &Identifier,
-    ) -> Result<()> {
+    pub async fn rename_table(&self, source: &Identifier, destination: &Identifier) -> Result<()> {
         validate_non_empty_multi(&[
             (source.database(), "source database name"),
             (source.object(), "source table name"),
@@ -367,12 +367,28 @@ impl RESTApi {
     }
 
     /// Drop a table.
-    pub async fn drop_table(&mut self, identifier: &Identifier) -> Result<()> {
+    pub async fn drop_table(&self, identifier: &Identifier) -> Result<()> {
         let database = identifier.database();
         let table = identifier.object();
         validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
         let path = self.resource_paths.table(database, table);
         let _resp: serde_json::Value = self.client.delete(&path, None::<&[(&str, &str)]>).await?;
         Ok(())
+    }
+
+    // ==================== Token Operations ====================
+
+    /// Load table token for data access.
+    ///
+    /// Corresponds to Python `RESTApi.load_table_token`.
+    pub async fn load_table_token(
+        &self,
+        identifier: &Identifier,
+    ) -> Result<super::api_response::GetTableTokenResponse> {
+        let database = identifier.database();
+        let table = identifier.object();
+        validate_non_empty_multi(&[(database, "database name"), (table, "table name")])?;
+        let path = self.resource_paths.table_token(database, table);
+        self.client.get(&path, None::<&[(&str, &str)]>).await
     }
 }

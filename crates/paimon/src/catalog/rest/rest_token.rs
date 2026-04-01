@@ -15,28 +15,25 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod file_io;
-pub use file_io::*;
+//! REST token for data access in Apache Paimon.
 
-mod storage;
-pub use storage::*;
+use std::collections::HashMap;
 
-#[cfg(feature = "storage-fs")]
-mod storage_fs;
-#[cfg(feature = "storage-fs")]
-use storage_fs::*;
+/// Token for REST data access, containing credentials and expiration.
+#[derive(Debug, Clone)]
+pub struct RESTToken {
+    /// Token key-value pairs (e.g. access_key_id, access_key_secret, etc.)
+    pub token: HashMap<String, String>,
+    /// Token expiration time in milliseconds since epoch.
+    pub expire_at_millis: i64,
+}
 
-#[cfg(feature = "storage-memory")]
-mod storage_memory;
-#[cfg(feature = "storage-memory")]
-use storage_memory::*;
-
-#[cfg(feature = "storage-oss")]
-pub(crate) mod storage_oss;
-#[cfg(feature = "storage-oss")]
-use storage_oss::*;
-
-#[cfg(feature = "storage-s3")]
-mod storage_s3;
-#[cfg(feature = "storage-s3")]
-use storage_s3::*;
+impl RESTToken {
+    /// Create a new RESTToken.
+    pub fn new(token: HashMap<String, String>, expire_at_millis: i64) -> Self {
+        Self {
+            token,
+            expire_at_millis,
+        }
+    }
+}

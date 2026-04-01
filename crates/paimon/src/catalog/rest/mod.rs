@@ -15,28 +15,15 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod file_io;
-pub use file_io::*;
+//! REST catalog implementation for Apache Paimon.
+//!
+//! This module provides a REST-based catalog that communicates with
+//! a Paimon REST catalog server for metadata operations.
 
-mod storage;
-pub use storage::*;
+mod rest_catalog;
+mod rest_token;
+mod rest_token_file_io;
 
-#[cfg(feature = "storage-fs")]
-mod storage_fs;
-#[cfg(feature = "storage-fs")]
-use storage_fs::*;
-
-#[cfg(feature = "storage-memory")]
-mod storage_memory;
-#[cfg(feature = "storage-memory")]
-use storage_memory::*;
-
-#[cfg(feature = "storage-oss")]
-pub(crate) mod storage_oss;
-#[cfg(feature = "storage-oss")]
-use storage_oss::*;
-
-#[cfg(feature = "storage-s3")]
-mod storage_s3;
-#[cfg(feature = "storage-s3")]
-use storage_s3::*;
+pub use rest_catalog::*;
+pub use rest_token::*;
+pub use rest_token_file_io::*;

@@ -15,28 +15,28 @@
 // specific language governing permissions and limitations
 // under the License.
 
-mod file_io;
-pub use file_io::*;
+//! Database structure for Apache Paimon catalogs.
 
-mod storage;
-pub use storage::*;
+use std::collections::HashMap;
 
-#[cfg(feature = "storage-fs")]
-mod storage_fs;
-#[cfg(feature = "storage-fs")]
-use storage_fs::*;
+/// Structure representing a database in a Paimon catalog.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Database {
+    /// Database name.
+    pub name: String,
+    /// Database options/properties.
+    pub options: HashMap<String, String>,
+    /// Optional comment describing the database.
+    pub comment: Option<String>,
+}
 
-#[cfg(feature = "storage-memory")]
-mod storage_memory;
-#[cfg(feature = "storage-memory")]
-use storage_memory::*;
-
-#[cfg(feature = "storage-oss")]
-pub(crate) mod storage_oss;
-#[cfg(feature = "storage-oss")]
-use storage_oss::*;
-
-#[cfg(feature = "storage-s3")]
-mod storage_s3;
-#[cfg(feature = "storage-s3")]
-use storage_s3::*;
+impl Database {
+    /// Create a new Database.
+    pub fn new(name: String, options: HashMap<String, String>, comment: Option<String>) -> Self {
+        Self {
+            name,
+            options,
+            comment,
+        }
+    }
+}
