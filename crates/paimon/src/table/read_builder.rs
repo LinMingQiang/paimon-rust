@@ -155,6 +155,7 @@ impl<'a> TableRead<'a> {
         let has_primary_keys = !self.table.schema.primary_keys().is_empty();
         let core_options = CoreOptions::new(self.table.schema.options());
         let deletion_vectors_enabled = core_options.deletion_vectors_enabled();
+        let data_evolution = core_options.data_evolution_enabled();
 
         if has_primary_keys && !deletion_vectors_enabled {
             return Err(Error::Unsupported {
@@ -167,6 +168,11 @@ impl<'a> TableRead<'a> {
 
         let reader =
             ArrowReaderBuilder::new(self.table.file_io.clone()).build(self.read_type().to_vec());
-        reader.read(data_splits)
+
+        if data_evolution {
+            reader.read_data_evolution(data_splits, self.table.schema.fields())
+        } else {
+            reader.read(data_splits)
+        }
     }
 }
