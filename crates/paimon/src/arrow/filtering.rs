@@ -26,6 +26,97 @@ pub(crate) fn reader_pruning_predicates(data_predicates: Vec<Predicate>) -> Vec<
         .collect()
 }
 
+/// Remap predicates from table-level indices to file-level indices.
+/// Predicates referencing fields not present in the file are resolved based on
+/// NULL semantics: the missing column is treated as all-NULL, so `IS NULL`
+/// becomes `AlwaysTrue` and all other operators become `AlwaysFalse`.
+pub(crate) fn remap_predicates_to_file(
+    predicates: &[Predicate],
+    table_fields: &[DataField],
+    file_fields: &[DataField],
+) -> Vec<Predicate> {
+    let mapping = build_field_mapping(table_fields, file_fields);
+    predicates
+        .iter()
+        .map(|p| remap_predicate(p, &mapping))
+        .collect()
+}
+
+fn remap_predicate(predicate: &Predicate, mapping: &[Option<usize>]) -> Predicate {
+    match predicate {
+        Predicate::Leaf {
+            column,
+            index,
+            data_type,
+            op,
+            literals,
+        } => {
+            match mapping.get(*index).copied().flatten() {
+                Some(file_index) => Predicate::Leaf {
+                    column: column.clone(),
+                    index: file_index,
+                    data_type: data_type.clone(),
+                    op: *op,
+                    literals: literals.clone(),
+                },
+                // Column missing from file → all values are NULL.
+                None => match op {
+                    PredicateOperator::IsNull => Predicate::AlwaysTrue,
+                    _ => Predicate::AlwaysFalse,
+                },
+            }
+        }
+        Predicate::And(children) => {
+            let remapped: Vec<_> = children
+                .iter()
+                .map(|c| remap_predicate(c, mapping))
+                .collect();
+            if remapped.iter().any(|p| matches!(p, Predicate::AlwaysFalse)) {
+                Predicate::AlwaysFalse
+            } else {
+                let filtered: Vec<_> = remapped
+                    .into_iter()
+                    .filter(|p| !matches!(p, Predicate::AlwaysTrue))
+                    .collect();
+                match filtered.len() {
+                    0 => Predicate::AlwaysTrue,
+                    1 => filtered.into_iter().next().unwrap(),
+                    _ => Predicate::and(filtered),
+                }
+            }
+        }
+        Predicate::Or(children) => {
+            let remapped: Vec<_> = children
+                .iter()
+                .map(|c| remap_predicate(c, mapping))
+                .collect();
+            if remapped.iter().any(|p| matches!(p, Predicate::AlwaysTrue)) {
+                Predicate::AlwaysTrue
+            } else {
+                let filtered: Vec<_> = remapped
+                    .into_iter()
+                    .filter(|p| !matches!(p, Predicate::AlwaysFalse))
+                    .collect();
+                match filtered.len() {
+                    0 => Predicate::AlwaysFalse,
+                    1 => filtered.into_iter().next().unwrap(),
+                    _ => Predicate::or(filtered),
+                }
+            }
+        }
+        Predicate::Not(inner) => {
+            let remapped = remap_predicate(inner, mapping);
+            match remapped {
+                Predicate::AlwaysTrue => Predicate::AlwaysFalse,
+                Predicate::AlwaysFalse => Predicate::AlwaysTrue,
+                other => Predicate::Not(Box::new(other)),
+            }
+        }
+        Predicate::AlwaysTrue => Predicate::AlwaysTrue,
+        Predicate::AlwaysFalse => Predicate::AlwaysFalse,
+    }
+}
+
 pub(crate) fn build_field_mapping(
     table_fields: &[DataField],
     file_fields: &[DataField],
