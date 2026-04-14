@@ -40,3 +40,8 @@ use storage_oss::*;
 mod storage_s3;
 #[cfg(feature = "storage-s3")]
 use storage_s3::*;
+
+#[cfg(feature = "storage-hdfs")]
+mod storage_hdfs;
+#[cfg(feature = "storage-hdfs")]
+use storage_hdfs::*;

@@ -16,9 +16,17 @@
 // under the License.
 
 use std::collections::HashMap;
+#[cfg(any(
+    feature = "storage-oss",
+    feature = "storage-s3",
+    feature = "storage-hdfs"
+))]
+use std::sync::Mutex;
 #[cfg(any(feature = "storage-oss", feature = "storage-s3"))]
-use std::sync::{Mutex, MutexGuard};
+use std::sync::MutexGuard;
 
+#[cfg(feature = "storage-hdfs")]
+use opendal::services::HdfsNativeConfig;
 #[cfg(feature = "storage-oss")]
 use opendal::services::OssConfig;
 #[cfg(feature = "storage-s3")]
@@ -47,6 +55,11 @@ pub enum Storage {
     S3 {
         config: Box<S3Config>,
         operators: Mutex<HashMap<String, Operator>>,
+    },
+    #[cfg(feature = "storage-hdfs")]
+    Hdfs {
+        config: Box<HdfsNativeConfig>,
+        op: Mutex<Option<Operator>>,
     },
 }
 
@@ -80,6 +93,14 @@ impl Storage {
                     operators: Mutex::new(HashMap::new()),
                 })
             }
+            #[cfg(feature = "storage-hdfs")]
+            Scheme::HdfsNative => {
+                let config = super::hdfs_config_parse(props)?;
+                Ok(Self::Hdfs {
+                    config: Box::new(config),
+                    op: Mutex::new(None),
+                })
+            }
             _ => Err(error::Error::IoUnsupported {
                 message: "Unsupported storage feature".to_string(),
             }),
@@ -103,6 +124,22 @@ impl Storage {
                 let (bucket, relative_path) = Self::s3_bucket_and_relative_path(path)?;
                 let op = Self::cached_s3_operator(config, operators, path, &bucket)?;
                 Ok((op, relative_path))
+            }
+            #[cfg(feature = "storage-hdfs")]
+            Storage::Hdfs { config, op } => {
+                let relative_path = super::hdfs_relative_path(path)?;
+                let mut guard = op.lock().map_err(|_| error::Error::UnexpectedError {
+                    message: "Failed to lock HDFS operator".to_string(),
+                    source: None,
+                })?;
+                // HDFS uses a single operator per Storage instance (unlike S3/OSS
+                // which cache per bucket). The operator is lazily initialized from
+                // the first path's NameNode if not set in config. One FileIO
+                // instance should target exactly one HDFS cluster.
+                if guard.is_none() {
+                    *guard = Some(super::hdfs_config_build(config, path)?);
+                }
+                Ok((guard.as_ref().unwrap().clone(), relative_path))
             }
         }
     }
@@ -231,6 +268,7 @@ impl Storage {
             "memory" => Ok(Scheme::Memory),
             "file" | "" => Ok(Scheme::Fs),
             "s3" | "s3a" => Ok(Scheme::S3),
+            "hdfs" => Ok(Scheme::HdfsNative),
             s => Ok(s.parse::<Scheme>()?),
         }
     }
