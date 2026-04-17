@@ -1,0 +1,13 @@
+[package]
+name = "paimon-rust-dev"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# 远程执行配置的容器地址.
+#paimon = { path = "/share/paimon-rust/crates/paimon" }
+#本地跑时候的本地路径.
+paimon = { path = "/Users/john.wick/CLionProjects/share/paimon-rust/crates/paimon" }
+
+tokio = "1.52.0"
+
